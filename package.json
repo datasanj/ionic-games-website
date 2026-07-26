@@ -12,7 +12,8 @@
     "@webgpu/types": "^0.1.71",
     "typescript": "~6.0.2",
     "unplugin-typegpu": "^0.11.6",
-    "vite": "^8.1.1"
+    "vite": "^8.1.1",
+    "wrangler": "^4.114.0"
   },
   "dependencies": {
     "@typegpu/noise": "^0.11.0",
