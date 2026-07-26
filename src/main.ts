@@ -10,6 +10,7 @@ import {
   div,
   gt,
   length,
+  max,
   mul,
   normalize,
   select,
@@ -59,8 +60,8 @@ async function start() {
     return;
   }
 
-  // Tunnel needs sharper pixels; clouds match 1× DPR (avoids upscale banding)
-  resizeCanvas(tunnelCanvas, { maxDpr: 1.25 });
+  // Match DPR on both layers — mismatched resolution can create edge seams when stacked
+  resizeCanvas(tunnelCanvas, { maxDpr: 1 });
   resizeCanvas(cloudsCanvas, { maxDpr: 1 });
 
   const root = await tgpu.init({
@@ -75,7 +76,6 @@ async function start() {
     bigStrips: d.f32,
     smallStrips: d.f32,
     dollyZoom: d.f32,
-    color: d.vec3f,
   });
 
   const paramsUniform = root.createUniform(Params, {
@@ -83,10 +83,10 @@ async function start() {
     aspectRatio: tunnelCanvas.clientWidth / tunnelCanvas.clientHeight,
     cameraPos: d.vec2f(0, -7),
     tunnelDepth: 28,
-    bigStrips: 10,
-    smallStrips: 5,
+    // Integer fold count keeps cos(n*atan2) continuous across the branch cut
+    bigStrips: 8,
+    smallStrips: 4,
     dollyZoom: 0.2,
-    color: d.vec3f(0.2, 0, 0.3),
   });
 
   const tunnelRadius = 11;
@@ -108,8 +108,11 @@ async function start() {
       p.x += params.cameraPos.x;
       p.y += params.cameraPos.y;
 
+      // Angular coord — integer bigStrips keeps cos continuous across atan2 cut;
+      // still clamp step so FP noise at the cut can't carve a dark radial seam
+      const ang = mul(atan2(p.y, p.x), params.bigStrips);
       const coords = d.vec3f(
-        add(mul(atan2(p.y, p.x), params.bigStrips), params.time),
+        add(ang, params.time),
         sub(mul(p.z, params.dollyZoom), mul(moveSpeed, params.time)),
         sub(length(p.xy), tunnelRadius),
       );
@@ -118,20 +121,32 @@ async function start() {
         cos(add(coords, cos(mul(coords, params.smallStrips)))),
         1,
       );
-      const dd = sub(mul(length(d.vec4f(coords.z, coords2)), 0.5), 0.1);
+      // Soft floor on dd — prevents 1/dd singularities / dark seam lines
+      const ddRaw = sub(mul(length(d.vec4f(coords.z, coords2)), 0.5), 0.1);
+      const dd = max(ddRaw, 0.035);
 
-      acc = add(acc, div(sub(1.2, cos(mul(params.color, p.z))), dd));
+      // Holi multi-hue along depth (not a single magenta)
+      const hueT = add(mul(p.z, 0.08), mul(params.time, 0.15));
+      const streakCol = d.vec3f(
+        add(0.55, mul(0.45, cos(hueT))),
+        add(0.2, mul(0.55, cos(add(hueT, 2.1)))),
+        add(0.35, mul(0.65, cos(add(hueT, 4.2)))),
+      );
+      acc = add(acc, div(mul(streakCol, 1.35), dd));
       z = add(z, dd);
     }
 
-    acc = safeTanh(mul(acc, 0.005));
-    // Dark regions transparent → cloud backdrop shows through
+    acc = safeTanh(mul(acc, 0.0045));
     const luma = add(
       add(mul(acc.x, 0.2126), mul(acc.y, 0.7152)),
       mul(acc.z, 0.0722),
     );
-    const alpha = saturate(smoothstep(0.008, 0.16, luma));
-    return d.vec4f(mul(acc, alpha), alpha);
+    // High floor: only bright streaks composite — dark strip edges won't
+    // punch thin dark lines through the cloud sun glow
+    const alpha = saturate(smoothstep(0.1, 0.32, luma));
+    // Soften edges further so strip boundaries don't read as hard seams
+    const soft = mul(alpha, alpha);
+    return d.vec4f(mul(acc, soft), soft);
   });
 
   const vertexMain = tgpu.vertexFn({
@@ -161,7 +176,7 @@ async function start() {
   let running = true;
 
   const onResize = () => {
-    resizeCanvas(tunnelCanvas, { maxDpr: 1.25 });
+    resizeCanvas(tunnelCanvas, { maxDpr: 1 });
     resizeCanvas(cloudsCanvas, { maxDpr: 1 });
     clouds.resize();
   };
@@ -175,14 +190,20 @@ async function start() {
       time: (timestamp * 0.001) % 1000,
     });
 
-    clouds.draw(timestamp);
-    tunnelPipeline
-      .withColorAttachment({
-        view: tunnelContext,
-        clearValue: [0, 0, 0, 0],
-        loadOp: 'clear',
-      })
-      .draw(3);
+    try {
+      clouds.draw(timestamp);
+      tunnelPipeline
+        .withColorAttachment({
+          view: tunnelContext,
+          clearValue: [0, 0, 0, 0],
+          loadOp: 'clear',
+        })
+        .draw(3);
+    } catch (err) {
+      // TypeGPU resolve/compile can throw once on bad HMR; keep the loop alive
+      // so a refresh/recover doesn't leave a permanent black frame.
+      console.error(err);
+    }
 
     requestAnimationFrame(draw);
   }

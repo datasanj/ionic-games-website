@@ -1,13 +1,12 @@
 // @ts-nocheck — TypeGPU operator overloads are transformed by unplugin-typegpu
 /**
- * TypeGPU Clouds backdrop — original composite + Holi color constants only.
+ * TypeGPU Clouds backdrop — Holi color constants, isotropic hash density.
  * https://docs.swmansion.com/TypeGPU/examples/#example=rendering--clouds
  */
 import type { TgpuRoot } from 'typegpu';
 import { common, d, std } from 'typegpu';
 import {
   FOV_FACTOR,
-  NOISE_TEXTURE_SIZE,
   SKY_BASE,
   SKY_WARM,
   SUN_BRIGHTNESS,
@@ -43,27 +42,14 @@ export function createCloudsLayer(
     d.vec2f(canvas.width, canvas.height),
   );
 
-  const noiseData = new Uint8Array(NOISE_TEXTURE_SIZE * NOISE_TEXTURE_SIZE);
-  // Soft value-noise field (not pure white noise) — avoids diagonal texel crawl
-  const raw = new Float32Array(NOISE_TEXTURE_SIZE * NOISE_TEXTURE_SIZE);
-  for (let i = 0; i < raw.length; i += 1) {
-    raw[i] = Math.random();
-  }
-  for (let y = 0; y < NOISE_TEXTURE_SIZE; y += 1) {
-    for (let x = 0; x < NOISE_TEXTURE_SIZE; x += 1) {
-      let sum = 0;
-      let count = 0;
-      for (let oy = -1; oy <= 1; oy += 1) {
-        for (let ox = -1; ox <= 1; ox += 1) {
-          const ix = (x + ox + NOISE_TEXTURE_SIZE) % NOISE_TEXTURE_SIZE;
-          const iy = (y + oy + NOISE_TEXTURE_SIZE) % NOISE_TEXTURE_SIZE;
-          sum += raw[iy * NOISE_TEXTURE_SIZE + ix];
-          count += 1;
-        }
-      }
-      noiseData[y * NOISE_TEXTURE_SIZE + x] = Math.floor((sum / count) * 255);
-    }
-  }
+  // Placeholder 1×1 — density uses hash noise; layout still expects a texture binding
+  const noiseTexture = root
+    .createTexture({
+      size: [1, 1],
+      format: 'r8unorm',
+    })
+    .$usage('sampled', 'render');
+  noiseTexture.write(new Uint8Array([128]));
 
   const sampler = root.createSampler({
     magFilter: 'linear',
@@ -71,14 +57,6 @@ export function createCloudsLayer(
     addressModeU: 'repeat',
     addressModeV: 'repeat',
   });
-
-  const noiseTexture = root
-    .createTexture({
-      size: [NOISE_TEXTURE_SIZE, NOISE_TEXTURE_SIZE],
-      format: 'r8unorm',
-    })
-    .$usage('sampled', 'render');
-  noiseTexture.write(noiseData);
 
   const bindGroup = root.createBindGroup(cloudsLayout, {
     params: paramsUniform.buffer,
@@ -114,17 +92,14 @@ export function createCloudsLayer(
         1 / (SUN_BRIGHTNESS * SUN_BRIGHTNESS * SUN_BRIGHTNESS),
       );
 
-      let skyCol = SKY_BASE + SKY_WARM * (1.0 - std.abs(rayDir.y)) * 0.55;
-      skyCol += SUN_COLOR * sunGlow * 0.65;
+      let skyCol = SKY_BASE + SKY_WARM * (1.0 - std.abs(rayDir.y)) * 0.42;
+      skyCol += SUN_COLOR * sunGlow * 0.7;
+      // Cool cyan lift opposite the warm sun — more Holi sky contrast
+      skyCol += d.vec3f(0.02, 0.12, 0.22) * std.saturate(-rayDir.x * 0.5 + 0.2);
 
       const cloudCol = raymarch(rayOrigin, rayDir, sunDir);
-      let finalCol = skyCol * (1.1 - cloudCol.a) + cloudCol.rgb;
-      // Break 8-bit ordered-dither / banding on soft gradients (not visible grain)
-      const debands =
-        (std.fract(std.sin(std.dot(uv, d.vec2f(12.9898, 78.233))) * 43758.5453) -
-          0.5) *
-        (1.5 / 255.0);
-      finalCol += d.vec3f(debands);
+      // No screen-space UV hash deband — locked dither reads as hatch on soft gradients
+      const finalCol = skyCol * (1.0 - cloudCol.a) + cloudCol.rgb;
       return d.vec4f(finalCol, 1.0);
     },
     targets: { format: presentationFormat },
@@ -140,7 +115,7 @@ export function createCloudsLayer(
         .with(bindGroup)
         .withColorAttachment({
           view: context,
-          clearValue: [0.012, 0.01, 0.055, 1],
+          clearValue: [0.006, 0.005, 0.032, 1],
           loadOp: 'clear',
         })
         .draw(3);
