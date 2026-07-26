@@ -140,7 +140,7 @@ export function createCloudsLayer(
         .with(bindGroup)
         .withColorAttachment({
           view: context,
-          clearValue: [0.035, 0.008, 0.09, 1],
+          clearValue: [0.012, 0.01, 0.055, 1],
           loadOp: 'clear',
         })
         .draw(3);

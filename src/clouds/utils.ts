@@ -12,8 +12,13 @@ import {
   FBM_LACUNARITY,
   FBM_OCTAVES,
   FBM_PERSISTENCE,
+  HOLI_CYAN,
+  HOLI_INDIGO,
+  HOLI_LIME,
+  HOLI_RED,
   HOLI_SAFFRON,
   HOLI_VIOLET,
+  HOLI_YELLOW,
   LIGHT_ABSORPTION,
   NOISE_TEXTURE_SIZE,
   NOISE_Z_OFFSET,
@@ -106,14 +111,23 @@ export const raymarch = tgpu.fn(
       const shadowPos = samplePos + sunDir;
       const shadowDensity = sampleDensityCheap(shadowPos);
       const shadow = std.saturate(cloudDensity - shadowDensity);
-      const lightVal = std.mix(0.3, 1.0, shadow);
+      // Deep folds vs glowing lit rims (luminance contrast)
+      const lightVal = std.mix(0.06, 1.35, shadow);
 
-      const light = SKY_AMBIENT * 1.15 + SUN_COLOR * lightVal * SUN_BRIGHTNESS;
-      // Soft multi-pigment albedo from world-space noise (no UV fract stripes)
-      const pigmentT = noise3d(samplePos * 0.48) * 0.5 + 0.5;
-      const brightAlbedo = std.mix(CLOUD_BRIGHT, HOLI_SAFFRON, pigmentT);
-      const darkAlbedo = std.mix(CLOUD_DARK, HOLI_VIOLET, 1.0 - pigmentT);
-      const color = std.mix(brightAlbedo, darkAlbedo, cloudDensity);
+      const light = SKY_AMBIENT * 0.55 + SUN_COLOR * lightVal * SUN_BRIGHTNESS;
+      // Soft multi-pigment albedo from continuous world-space noise (no UV fract stripes)
+      const n1 = noise3d(samplePos * 0.48) * 0.5 + 0.5;
+      const n2 = noise3d(samplePos * 0.33 + d.vec3f(19.1, 7.3, 11.7)) * 0.5 + 0.5;
+      const n3 = noise3d(samplePos * 0.21 + d.vec3f(3.7, 23.9, 5.1)) * 0.5 + 0.5;
+
+      const warm = std.mix(HOLI_RED, std.mix(HOLI_SAFFRON, HOLI_YELLOW, n2), n1);
+      const cool = std.mix(HOLI_LIME, HOLI_CYAN, n1);
+      const magenta = std.mix(CLOUD_BRIGHT, HOLI_VIOLET, n2);
+      const warmCool = std.mix(warm, cool, std.smoothstep(0.22, 0.78, n3));
+      const brightAlbedo = std.mix(warmCool, magenta, std.smoothstep(0.32, 0.82, n2));
+      const darkAlbedo = std.mix(CLOUD_DARK, HOLI_INDIGO, n1);
+      // Dense cores → deep teal/indigo; thin edges keep saturated pigment
+      const color = std.mix(brightAlbedo, darkAlbedo, std.smoothstep(0.04, 0.58, cloudDensity));
       const lit = color * light;
 
       const contrib = d.vec4f(lit, 1) * cloudDensity * (LIGHT_ABSORPTION - accum.a);
