@@ -12,6 +12,8 @@ import {
   FBM_LACUNARITY,
   FBM_OCTAVES,
   FBM_PERSISTENCE,
+  HOLI_SAFFRON,
+  HOLI_VIOLET,
   LIGHT_ABSORPTION,
   NOISE_TEXTURE_SIZE,
   NOISE_Z_OFFSET,
@@ -106,8 +108,12 @@ export const raymarch = tgpu.fn(
       const shadow = std.saturate(cloudDensity - shadowDensity);
       const lightVal = std.mix(0.3, 1.0, shadow);
 
-      const light = SKY_AMBIENT * 1.1 + SUN_COLOR * lightVal * SUN_BRIGHTNESS;
-      const color = std.mix(CLOUD_BRIGHT, CLOUD_DARK, cloudDensity);
+      const light = SKY_AMBIENT * 1.15 + SUN_COLOR * lightVal * SUN_BRIGHTNESS;
+      // Soft multi-pigment albedo from world-space noise (no UV fract stripes)
+      const pigmentT = noise3d(samplePos * 0.48) * 0.5 + 0.5;
+      const brightAlbedo = std.mix(CLOUD_BRIGHT, HOLI_SAFFRON, pigmentT);
+      const darkAlbedo = std.mix(CLOUD_DARK, HOLI_VIOLET, 1.0 - pigmentT);
+      const color = std.mix(brightAlbedo, darkAlbedo, cloudDensity);
       const lit = color * light;
 
       const contrib = d.vec4f(lit, 1) * cloudDensity * (LIGHT_ABSORPTION - accum.a);

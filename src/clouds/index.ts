@@ -114,8 +114,8 @@ export function createCloudsLayer(
         1 / (SUN_BRIGHTNESS * SUN_BRIGHTNESS * SUN_BRIGHTNESS),
       );
 
-      let skyCol = SKY_BASE + SKY_WARM * (1.0 - std.abs(rayDir.y)) * 0.4;
-      skyCol += SUN_COLOR * sunGlow * 0.5;
+      let skyCol = SKY_BASE + SKY_WARM * (1.0 - std.abs(rayDir.y)) * 0.55;
+      skyCol += SUN_COLOR * sunGlow * 0.65;
 
       const cloudCol = raymarch(rayOrigin, rayDir, sunDir);
       let finalCol = skyCol * (1.1 - cloudCol.a) + cloudCol.rgb;
@@ -140,7 +140,7 @@ export function createCloudsLayer(
         .with(bindGroup)
         .withColorAttachment({
           view: context,
-          clearValue: [0.06, 0.03, 0.1, 1],
+          clearValue: [0.035, 0.008, 0.09, 1],
           loadOp: 'clear',
         })
         .draw(3);
