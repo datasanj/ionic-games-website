@@ -1,8 +1,10 @@
 // @ts-nocheck — TypeGPU operator overloads are transformed by unplugin-typegpu
 /**
  * TypeGPU Clouds raymarch — upstream noise/FBM structure.
- * Holi dynamic range via albedo + lightVal only (no screen-space fract,
- * no multi-noise pigment stacks). Sky terminator stays soft in index.ts.
+ * Holi: density picks dark vs airy pigment families; soft world-space
+ * sin/cos phases pick which Holi color within each family (exclusive-ish
+ * weights so mixes don't mud into brown). lightVal is luminance only —
+ * never hue — so the sun half-plane can't become a color diagonal.
  * https://docs.swmansion.com/TypeGPU/examples/#example=rendering--clouds
  */
 import { tgpu, d, std } from 'typegpu';
@@ -15,15 +17,16 @@ import {
   FBM_LACUNARITY,
   FBM_OCTAVES,
   FBM_PERSISTENCE,
+  HOLI_CRIMSON,
   HOLI_LIME,
   HOLI_MAGENTA,
+  HOLI_PLUM,
   HOLI_SAFFRON,
+  HOLI_YELLOW,
   LIGHT_ABSORPTION,
   NOISE_TEXTURE_SIZE,
   NOISE_Z_OFFSET,
-  SKY_AMBIENT,
   SUN_BRIGHTNESS,
-  SUN_COLOR,
 } from './consts.ts';
 import { cloudsLayout } from './types.ts';
 
@@ -110,23 +113,77 @@ export const raymarch = tgpu.fn(
       const shadowPos = samplePos + sunDir;
       const shadowDensity = sampleDensityCheap(shadowPos);
       const shadow = std.saturate(cloudDensity - shadowDensity);
-      // Wide DR: deep shaded folds ↔ hot lit powder rims
-      const lightVal = std.mix(0.06, 1.35, shadow);
+      // Luminance only — deep folds ↔ bright powder rims
+      const lightVal = std.mix(0.05, 1.4, shadow);
 
-      // Density^2 pushes pigment cores darker vs bright edges
       const fold = cloudDensity * cloudDensity;
-      const light =
-        SKY_AMBIENT * (0.55 + lightVal * 0.55) +
-        SUN_COLOR * lightVal * SUN_BRIGHTNESS * 1.35;
+      const airy = 1.0 - fold;
 
-      // Upstream albedo mix + Holi accents from lighting/density only
+      // Soft world-space phases — z/y-weighted so they don't form a screen-X half-plane
+      const phaseA =
+        0.5 +
+        0.5 *
+          std.sin(samplePos.z * 0.48 + samplePos.y * 0.36 + samplePos.x * 0.18);
+      const phaseB =
+        0.5 +
+        0.5 *
+          std.cos(samplePos.z * 0.4 - samplePos.y * 0.44 + samplePos.x * 0.16);
+      // Bright vs dark powder family (mostly along wind/depth, not screen X)
+      const phaseC =
+        0.5 + 0.5 * std.sin(samplePos.z * 0.52 + samplePos.y * 0.3);
+
+      // Sharpen phases toward exclusive pigment picks (less mud)
+      const darkPick = std.smoothstep(0.32, 0.68, phaseA);
+      const brightPick = std.smoothstep(0.32, 0.68, phaseB);
+      const brightFamily = std.smoothstep(0.4, 0.6, phaseC);
+      const festPick = std.smoothstep(0.42, 0.58, phaseA * 0.5 + phaseB * 0.5);
+
+      // Near-neutral luminance — Holi albedos keep their hue
+      const lightAmt =
+        std.mix(0.03, 1.35, lightVal) *
+        std.mix(0.38, 1.28, airy) *
+        SUN_BRIGHTNESS;
+
+      // Never let-alias d.vec3f consts — TypeGPU black-screens on that
       let color = std.mix(CLOUD_BRIGHT, CLOUD_DARK, fold);
-      color = std.mix(color, HOLI_SAFFRON, lightVal * (1.0 - fold) * 0.55);
-      color = std.mix(color, HOLI_MAGENTA, lightVal * fold * 0.35);
-      color = std.mix(color, HOLI_LIME, (1.0 - lightVal) * fold * 0.4);
-      const lit = color * light;
 
-      const contrib = d.vec4f(lit, 1) * cloudDensity * (LIGHT_ABSORPTION - accum.a);
+      // Dense folds always get crimson↔plum (dark pigment punch)
+      color = std.mix(
+        color,
+        std.mix(HOLI_CRIMSON, HOLI_PLUM, darkPick),
+        fold * 0.92,
+      );
+
+      // Bright gulal slabs (yellow↔lime) — world phase, not sun half-plane
+      color = std.mix(
+        color,
+        std.mix(HOLI_YELLOW, HOLI_LIME, brightPick),
+        brightFamily * (0.45 + airy * 0.5),
+      );
+
+      // Extra dark-family mid volumes so crimson/plum aren't only tiny folds
+      color = std.mix(
+        color,
+        std.mix(HOLI_CRIMSON, HOLI_PLUM, darkPick),
+        (1.0 - brightFamily) * airy * 0.35,
+      );
+
+      // Magenta / saffron accents so more Holi hues coexist
+      color = std.mix(
+        color,
+        HOLI_MAGENTA,
+        festPick * (1.0 - brightFamily) * 0.38,
+      );
+      color = std.mix(
+        color,
+        HOLI_SAFFRON,
+        (1.0 - festPick) * brightFamily * airy * 0.32,
+      );
+
+      const lit = color * lightAmt;
+
+      const contrib =
+        d.vec4f(lit, 1) * cloudDensity * (LIGHT_ABSORPTION - accum.a);
       accum += contrib;
 
       if (accum.a >= LIGHT_ABSORPTION - 0.001) {
