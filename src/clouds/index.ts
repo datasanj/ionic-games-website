@@ -36,8 +36,9 @@ export function createCloudsLayer(
 
   const paramsUniform = root.createUniform(CloudsParams, {
     time: 0,
-    maxSteps: 48,
-    maxDistance: 9.5,
+    // Slightly richer than prior 48 — still under upstream "medium" (50/10)
+    maxSteps: 56,
+    maxDistance: 10.5,
   });
   const resolutionUniform = root.createUniform(
     d.vec2f,

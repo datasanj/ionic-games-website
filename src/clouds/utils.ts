@@ -1,8 +1,8 @@
 // @ts-nocheck — TypeGPU operator overloads are transformed by unplugin-typegpu
 /**
- * TypeGPU Clouds raymarch — restored upstream noise/FBM/lighting structure.
- * Holi is albedo constants + a soft lightVal mix only (no screen-space fract,
- * no multi-noise pigment stacks, no hash replacement).
+ * TypeGPU Clouds raymarch — upstream noise/FBM structure.
+ * Holi dynamic range via albedo + lightVal only (no screen-space fract,
+ * no multi-noise pigment stacks). Sky terminator stays soft in index.ts.
  * https://docs.swmansion.com/TypeGPU/examples/#example=rendering--clouds
  */
 import { tgpu, d, std } from 'typegpu';
@@ -16,6 +16,7 @@ import {
   FBM_OCTAVES,
   FBM_PERSISTENCE,
   HOLI_LIME,
+  HOLI_MAGENTA,
   HOLI_SAFFRON,
   LIGHT_ABSORPTION,
   NOISE_TEXTURE_SIZE,
@@ -109,14 +110,20 @@ export const raymarch = tgpu.fn(
       const shadowPos = samplePos + sunDir;
       const shadowDensity = sampleDensityCheap(shadowPos);
       const shadow = std.saturate(cloudDensity - shadowDensity);
-      // Upstream light range
-      const lightVal = std.mix(0.3, 1.0, shadow);
+      // Wide DR: deep shaded folds ↔ hot lit powder rims
+      const lightVal = std.mix(0.06, 1.35, shadow);
 
-      const light = SKY_AMBIENT * 1.1 + SUN_COLOR * lightVal * SUN_BRIGHTNESS;
-      // Upstream albedo mix + soft Holi accents from lighting only
-      let color = std.mix(CLOUD_BRIGHT, CLOUD_DARK, cloudDensity);
-      color = std.mix(color, HOLI_SAFFRON, lightVal * 0.28);
-      color = std.mix(color, HOLI_LIME, (1.0 - lightVal) * cloudDensity * 0.18);
+      // Density^2 pushes pigment cores darker vs bright edges
+      const fold = cloudDensity * cloudDensity;
+      const light =
+        SKY_AMBIENT * (0.55 + lightVal * 0.55) +
+        SUN_COLOR * lightVal * SUN_BRIGHTNESS * 1.35;
+
+      // Upstream albedo mix + Holi accents from lighting/density only
+      let color = std.mix(CLOUD_BRIGHT, CLOUD_DARK, fold);
+      color = std.mix(color, HOLI_SAFFRON, lightVal * (1.0 - fold) * 0.55);
+      color = std.mix(color, HOLI_MAGENTA, lightVal * fold * 0.35);
+      color = std.mix(color, HOLI_LIME, (1.0 - lightVal) * fold * 0.4);
       const lit = color * light;
 
       const contrib = d.vec4f(lit, 1) * cloudDensity * (LIGHT_ABSORPTION - accum.a);

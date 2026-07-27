@@ -1,6 +1,7 @@
 /**
  * Clouds backdrop + centrifuge tunnel (transparent darks) + centered logo.
- * Tunnel restored to classic atan2 centrifuge; darks keyed out so Holi clouds show.
+ * Tunnel restored to upstream TypeGPU Centrifuge 2 intensity; darks keyed
+ * softly so Holi clouds show through without killing bright streaks.
  */
 import tgpu, { d } from 'typegpu';
 import {
@@ -60,7 +61,8 @@ async function start() {
     return;
   }
 
-  resizeCanvas(tunnelCanvas, { maxDpr: 1 });
+  // Tunnel sharper like original; clouds stay 1× (avoids upscale banding)
+  resizeCanvas(tunnelCanvas, { maxDpr: 1.25 });
   resizeCanvas(cloudsCanvas, { maxDpr: 1 });
 
   const root = await tgpu.init({
@@ -75,16 +77,20 @@ async function start() {
     bigStrips: d.f32,
     smallStrips: d.f32,
     dollyZoom: d.f32,
+    color: d.vec3f,
   });
 
+  // Upstream Centrifuge 2 defaults (depth 50, tone 0.005, color formula)
   const paramsUniform = root.createUniform(Params, {
     time: 0,
     aspectRatio: tunnelCanvas.clientWidth / tunnelCanvas.clientHeight,
     cameraPos: d.vec2f(0, -7),
-    tunnelDepth: 28,
+    tunnelDepth: 55,
     bigStrips: 10,
     smallStrips: 5,
     dollyZoom: 0.2,
+    // Upstream-style modulation with Holi-leaning magenta bias
+    color: d.vec3f(0.32, 0.06, 0.28),
   });
 
   const tunnelRadius = 11;
@@ -117,29 +123,24 @@ async function start() {
         cos(add(coords, cos(mul(coords, params.smallStrips)))),
         1,
       );
+      // Upstream dd — no artificial clamp that softens strips
       const dd = sub(mul(length(d.vec4f(coords.z, coords2)), 0.5), 0.1);
 
-      // Holi multi-hue streaks along depth
-      const hueT = add(mul(p.z, 0.08), mul(params.time, 0.12));
-      const streakCol = d.vec3f(
-        add(0.55, mul(0.45, cos(hueT))),
-        add(0.2, mul(0.55, cos(add(hueT, 2.1)))),
-        add(0.35, mul(0.65, cos(add(hueT, 4.2)))),
-      );
-      acc = add(acc, div(mul(streakCol, 1.2), dd));
+      // Upstream color accumulation: (1.2 - cos(color * p.z)) / dd
+      acc = add(acc, div(sub(1.2, cos(mul(params.color, p.z))), dd));
       z = add(z, dd);
     }
 
-    acc = safeTanh(mul(acc, 0.0042));
+    // Upstream tone mapping (0.005) — restores strip brightness/contrast
+    acc = safeTanh(mul(acc, 0.005));
     const luma = add(
       add(mul(acc.x, 0.2126), mul(acc.y, 0.7152)),
       mul(acc.z, 0.0722),
     );
-    // Soft key: bright streaks only — avoids opaque strip bands reading as a
-    // "massive diagonal" through the Holi sky behind the logo
-    const alpha = saturate(smoothstep(0.06, 0.28, luma));
-    const soft = mul(alpha, alpha);
-    return d.vec4f(mul(acc, soft), soft);
+    // Soft luminance key: true darks transparent for Holi clouds; mid/bright
+    // streaks keep near-full intensity (no squared alpha floor)
+    const alpha = saturate(smoothstep(0.003, 0.09, luma));
+    return d.vec4f(mul(acc, alpha), alpha);
   });
 
   const vertexMain = tgpu.vertexFn({
@@ -169,7 +170,7 @@ async function start() {
   let running = true;
 
   const onResize = () => {
-    resizeCanvas(tunnelCanvas, { maxDpr: 1 });
+    resizeCanvas(tunnelCanvas, { maxDpr: 1.25 });
     resizeCanvas(cloudsCanvas, { maxDpr: 1 });
     clouds.resize();
   };
