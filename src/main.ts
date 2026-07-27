@@ -2,6 +2,9 @@
  * Clouds backdrop + centrifuge tunnel (transparent darks) + centered logo.
  * Tunnel restored to upstream TypeGPU Centrifuge 2 intensity; darks keyed
  * softly so Holi clouds show through without killing bright streaks.
+ *
+ * Perf: half-res clouds (CSS upscale), alternate-frame cloud updates,
+ * visibility pause — tunnel stays full-rate / full quality.
  */
 import tgpu, { d } from 'typegpu';
 import {
@@ -40,6 +43,11 @@ if (!tunnelEl || !cloudsEl) {
 const tunnelCanvas = tunnelEl;
 const cloudsCanvas = cloudsEl;
 
+/** Soft volumes upscale cleanly; keep tunnel sharper than clouds. */
+const TUNNEL_MAX_DPR = 1.25;
+const CLOUDS_MAX_DPR = 1;
+const CLOUDS_SCALE = 0.5;
+
 function resizeCanvas(
   target: HTMLCanvasElement,
   opts: { maxDpr?: number; scale?: number } = {},
@@ -61,9 +69,8 @@ async function start() {
     return;
   }
 
-  // Tunnel sharper like original; clouds stay 1× (avoids upscale banding)
-  resizeCanvas(tunnelCanvas, { maxDpr: 1.25 });
-  resizeCanvas(cloudsCanvas, { maxDpr: 1 });
+  resizeCanvas(tunnelCanvas, { maxDpr: TUNNEL_MAX_DPR });
+  resizeCanvas(cloudsCanvas, { maxDpr: CLOUDS_MAX_DPR, scale: CLOUDS_SCALE });
 
   const root = await tgpu.init({
     adapter: { powerPreference: 'high-performance' },
@@ -168,16 +175,43 @@ async function start() {
   clouds.resize();
 
   let running = true;
+  let frameIndex = 0;
+  let lastTs = 0;
+  /** EMA of frame time (ms). Target budget ~8.3ms for 120Hz. */
+  let emaFrameMs = 8.3;
+  /**
+   * Cloud cadence: 1 = every frame, 2 = every other (default), 3 = every third.
+   * Soft wind makes skipped frames nearly invisible; canvas retains prior pixels.
+   */
+  let cloudStride = 2;
 
   const onResize = () => {
-    resizeCanvas(tunnelCanvas, { maxDpr: 1.25 });
-    resizeCanvas(cloudsCanvas, { maxDpr: 1 });
+    resizeCanvas(tunnelCanvas, { maxDpr: TUNNEL_MAX_DPR });
+    resizeCanvas(cloudsCanvas, { maxDpr: CLOUDS_MAX_DPR, scale: CLOUDS_SCALE });
     clouds.resize();
   };
   window.addEventListener('resize', onResize);
 
+  const onVisibility = () => {
+    if (document.visibilityState === 'visible' && running) {
+      lastTs = 0;
+      requestAnimationFrame(draw);
+    }
+  };
+  document.addEventListener('visibilitychange', onVisibility);
+
   function draw(timestamp: number) {
     if (!running) return;
+    if (document.visibilityState === 'hidden') return;
+
+    if (lastTs > 0) {
+      const dt = Math.min(33, timestamp - lastTs);
+      emaFrameMs = emaFrameMs * 0.9 + dt * 0.1;
+      // Adapt only cloud cadence — never touch tunnel quality
+      if (emaFrameMs > 10.5) cloudStride = 3;
+      else if (emaFrameMs < 7.2) cloudStride = 2;
+    }
+    lastTs = timestamp;
 
     paramsUniform.patch({
       aspectRatio: tunnelCanvas.clientWidth / tunnelCanvas.clientHeight,
@@ -185,7 +219,10 @@ async function start() {
     });
 
     try {
-      clouds.draw(timestamp);
+      // Half-res clouds + stride: ~4–8× less cloud GPU work vs every-frame 1×
+      if (frameIndex % cloudStride === 0) {
+        clouds.draw(timestamp);
+      }
       tunnelPipeline
         .withColorAttachment({
           view: tunnelContext,
@@ -197,6 +234,7 @@ async function start() {
       console.error(err);
     }
 
+    frameIndex += 1;
     requestAnimationFrame(draw);
   }
 
@@ -205,6 +243,7 @@ async function start() {
   window.addEventListener('pagehide', () => {
     running = false;
     window.removeEventListener('resize', onResize);
+    document.removeEventListener('visibilitychange', onVisibility);
     root.destroy();
   });
 }

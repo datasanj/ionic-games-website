@@ -36,7 +36,7 @@ export function createCloudsLayer(
 
   const paramsUniform = root.createUniform(CloudsParams, {
     time: 0,
-    // Slightly richer than prior 48 — still under upstream "medium" (50/10)
+    // Keep volume richness; half-res + alternate-frame carry the FPS win
     maxSteps: 56,
     maxDistance: 10.5,
   });
