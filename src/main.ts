@@ -2,7 +2,8 @@
  * Clouds backdrop + centrifuge tunnel (transparent darks) + centered logo.
  * Tunnel restored to upstream TypeGPU Centrifuge 2 intensity; darks keyed
  * softly so Holi clouds show through without killing bright streaks.
- * Pointer steers look direction so rings bias toward the cursor.
+ * Pointer biases only far/incoming ring generation (depth-scaled); near
+ * tunnel and camera stay fixed.
  *
  * Perf: half-res clouds (CSS upscale), alternate-frame cloud updates,
  * visibility pause — tunnel stays full-rate / full quality.
@@ -81,7 +82,8 @@ async function start() {
     time: d.f32,
     aspectRatio: d.f32,
     cameraPos: d.vec2f,
-    lookOffset: d.vec2f,
+    /** Max XY bend of the tunnel path at vanishing depth (pointer units). */
+    steerOffset: d.vec2f,
     tunnelDepth: d.i32,
     bigStrips: d.f32,
     smallStrips: d.f32,
@@ -94,7 +96,7 @@ async function start() {
     time: 0,
     aspectRatio: tunnelCanvas.clientWidth / tunnelCanvas.clientHeight,
     cameraPos: d.vec2f(0, -7),
-    lookOffset: d.vec2f(0, 0),
+    steerOffset: d.vec2f(0, 0),
     tunnelDepth: 55,
     bigStrips: 10,
     smallStrips: 5,
@@ -105,10 +107,12 @@ async function start() {
 
   const tunnelRadius = 11;
   const moveSpeed = 5;
-  /** How far look direction follows the pointer (−1‥1 → ray XY bias). */
-  const LOOK_STEER = 0.62;
-  /** Extra tunnel-axis slide so rings lean into the cursor. */
-  const AXIS_STEER = 2.8;
+  /** Max far-end path bend in tunnel XY (pointer −1‥1 → world offset). */
+  const FAR_STEER = 5.5;
+  /** March distance where pointer influence begins (near/mid field stays put). */
+  const STEER_NEAR_Z = 24;
+  /** March distance where pointer influence is full (vanishing rings). */
+  const STEER_FAR_Z = 52;
   const BASE_CAMERA_Y = -7;
 
   const fragmentMain = tgpu.fragmentFn({
@@ -118,10 +122,8 @@ async function start() {
     'use gpu';
     const params = paramsUniform.$;
     const ratio = d.vec2f(params.aspectRatio, 1);
-    // Bias look toward pointer so the vanishing point / rings follow the cursor
-    const dir = normalize(
-      d.vec3f(add(mul(uv, ratio), params.lookOffset), -1),
-    );
+    // Fixed look — camera / near tunnel never follow the pointer
+    const dir = normalize(d.vec3f(mul(uv, ratio), -1));
 
     let z = d.f32(0);
     let acc = d.vec3f();
@@ -129,6 +131,13 @@ async function start() {
       const p = mul(dir, z);
       p.x += params.cameraPos.x;
       p.y += params.cameraPos.y;
+
+      // Far-only steer: 0 through near/mid, ramps hard at vanishing distance.
+      // Squared smoothstep keeps mid rings locked; only deep incoming rings bend.
+      const farT = smoothstep(d.f32(STEER_NEAR_Z), d.f32(STEER_FAR_Z), z);
+      const farW = mul(farT, farT);
+      p.x += mul(params.steerOffset.x, farW);
+      p.y += mul(params.steerOffset.y, farW);
 
       // Classic centrifuge coords (upstream TypeGPU / XorDev)
       const coords = d.vec3f(
@@ -252,17 +261,15 @@ async function start() {
     pointerSmoothX += (pointerTargetX - pointerSmoothX) * POINTER_SMOOTH;
     pointerSmoothY += (pointerTargetY - pointerSmoothY) * POINTER_SMOOTH;
 
-    // Negate: vanishing point sits at ≈ −lookOffset / −ΔcameraPos
+    // Positive steer: far rings bend toward cursor; camera / near field fixed
     paramsUniform.patch({
       aspectRatio: tunnelCanvas.clientWidth / tunnelCanvas.clientHeight,
       time: (timestamp * 0.001) % 1000,
-      lookOffset: d.vec2f(
-        -pointerSmoothX * LOOK_STEER,
-        -pointerSmoothY * LOOK_STEER,
-      ),
-      cameraPos: d.vec2f(
-        -pointerSmoothX * AXIS_STEER,
-        BASE_CAMERA_Y - pointerSmoothY * AXIS_STEER,
+      cameraPos: d.vec2f(0, BASE_CAMERA_Y),
+      // Negate: SDF samples p+offset ⇒ cylinder axis at −offset; match cursor
+      steerOffset: d.vec2f(
+        -pointerSmoothX * FAR_STEER,
+        -pointerSmoothY * FAR_STEER,
       ),
     });
 
