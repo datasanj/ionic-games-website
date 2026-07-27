@@ -1,5 +1,6 @@
 /**
- * Dark clouds (backdrop) + tunnel streaks over them + centered logo.
+ * Clouds backdrop + centrifuge tunnel (transparent darks) + centered logo.
+ * Tunnel restored to classic atan2 centrifuge; darks keyed out so Holi clouds show.
  */
 import tgpu, { d } from 'typegpu';
 import {
@@ -10,7 +11,6 @@ import {
   div,
   gt,
   length,
-  max,
   mul,
   normalize,
   select,
@@ -60,7 +60,6 @@ async function start() {
     return;
   }
 
-  // Match DPR on both layers — mismatched resolution can create edge seams when stacked
   resizeCanvas(tunnelCanvas, { maxDpr: 1 });
   resizeCanvas(cloudsCanvas, { maxDpr: 1 });
 
@@ -83,9 +82,8 @@ async function start() {
     aspectRatio: tunnelCanvas.clientWidth / tunnelCanvas.clientHeight,
     cameraPos: d.vec2f(0, -7),
     tunnelDepth: 28,
-    // Integer fold count keeps cos(n*atan2) continuous across the branch cut
-    bigStrips: 8,
-    smallStrips: 4,
+    bigStrips: 10,
+    smallStrips: 5,
     dollyZoom: 0.2,
   });
 
@@ -108,11 +106,9 @@ async function start() {
       p.x += params.cameraPos.x;
       p.y += params.cameraPos.y;
 
-      // Angular coord — integer bigStrips keeps cos continuous across atan2 cut;
-      // still clamp step so FP noise at the cut can't carve a dark radial seam
-      const ang = mul(atan2(p.y, p.x), params.bigStrips);
+      // Classic centrifuge coords (upstream TypeGPU / XorDev)
       const coords = d.vec3f(
-        add(ang, params.time),
+        add(mul(atan2(p.y, p.x), params.bigStrips), params.time),
         sub(mul(p.z, params.dollyZoom), mul(moveSpeed, params.time)),
         sub(length(p.xy), tunnelRadius),
       );
@@ -121,30 +117,27 @@ async function start() {
         cos(add(coords, cos(mul(coords, params.smallStrips)))),
         1,
       );
-      // Soft floor on dd — prevents 1/dd singularities / dark seam lines
-      const ddRaw = sub(mul(length(d.vec4f(coords.z, coords2)), 0.5), 0.1);
-      const dd = max(ddRaw, 0.035);
+      const dd = sub(mul(length(d.vec4f(coords.z, coords2)), 0.5), 0.1);
 
-      // Holi multi-hue along depth (not a single magenta)
-      const hueT = add(mul(p.z, 0.08), mul(params.time, 0.15));
+      // Holi multi-hue streaks along depth
+      const hueT = add(mul(p.z, 0.08), mul(params.time, 0.12));
       const streakCol = d.vec3f(
         add(0.55, mul(0.45, cos(hueT))),
         add(0.2, mul(0.55, cos(add(hueT, 2.1)))),
         add(0.35, mul(0.65, cos(add(hueT, 4.2)))),
       );
-      acc = add(acc, div(mul(streakCol, 1.35), dd));
+      acc = add(acc, div(mul(streakCol, 1.2), dd));
       z = add(z, dd);
     }
 
-    acc = safeTanh(mul(acc, 0.0045));
+    acc = safeTanh(mul(acc, 0.0042));
     const luma = add(
       add(mul(acc.x, 0.2126), mul(acc.y, 0.7152)),
       mul(acc.z, 0.0722),
     );
-    // High floor: only bright streaks composite — dark strip edges won't
-    // punch thin dark lines through the cloud sun glow
-    const alpha = saturate(smoothstep(0.1, 0.32, luma));
-    // Soften edges further so strip boundaries don't read as hard seams
+    // Soft key: bright streaks only — avoids opaque strip bands reading as a
+    // "massive diagonal" through the Holi sky behind the logo
+    const alpha = saturate(smoothstep(0.06, 0.28, luma));
     const soft = mul(alpha, alpha);
     return d.vec4f(mul(acc, soft), soft);
   });
@@ -200,8 +193,6 @@ async function start() {
         })
         .draw(3);
     } catch (err) {
-      // TypeGPU resolve/compile can throw once on bad HMR; keep the loop alive
-      // so a refresh/recover doesn't leave a permanent black frame.
       console.error(err);
     }
 

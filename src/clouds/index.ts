@@ -1,17 +1,19 @@
 // @ts-nocheck — TypeGPU operator overloads are transformed by unplugin-typegpu
 /**
- * TypeGPU Clouds backdrop — Holi color constants, isotropic hash density.
+ * TypeGPU Clouds backdrop — restored upstream sky + texture noise.
+ * Holi via soft pastel sky/sun constants (not near-black + blown yellow).
  * https://docs.swmansion.com/TypeGPU/examples/#example=rendering--clouds
  */
 import type { TgpuRoot } from 'typegpu';
 import { common, d, std } from 'typegpu';
 import {
   FOV_FACTOR,
-  SKY_BASE,
-  SKY_WARM,
+  NOISE_TEXTURE_SIZE,
+  SKY_HORIZON,
+  SKY_ZENITH_TINT,
   SUN_BRIGHTNESS,
-  SUN_COLOR,
   SUN_DIRECTION,
+  SUN_GLOW,
   WIND_SPEED,
 } from './consts.ts';
 import { cloudsLayout, CloudsParams } from './types.ts';
@@ -42,14 +44,10 @@ export function createCloudsLayer(
     d.vec2f(canvas.width, canvas.height),
   );
 
-  // Placeholder 1×1 — density uses hash noise; layout still expects a texture binding
-  const noiseTexture = root
-    .createTexture({
-      size: [1, 1],
-      format: 'r8unorm',
-    })
-    .$usage('sampled', 'render');
-  noiseTexture.write(new Uint8Array([128]));
+  const noiseData = new Uint8Array(NOISE_TEXTURE_SIZE * NOISE_TEXTURE_SIZE);
+  for (let i = 0; i < noiseData.length; i += 1) {
+    noiseData[i] = Math.floor(Math.random() * 255);
+  }
 
   const sampler = root.createSampler({
     magFilter: 'linear',
@@ -57,6 +55,14 @@ export function createCloudsLayer(
     addressModeU: 'repeat',
     addressModeV: 'repeat',
   });
+
+  const noiseTexture = root
+    .createTexture({
+      size: [NOISE_TEXTURE_SIZE, NOISE_TEXTURE_SIZE],
+      format: 'r8unorm',
+    })
+    .$usage('sampled', 'render');
+  noiseTexture.write(noiseData);
 
   const bindGroup = root.createBindGroup(cloudsLayout, {
     params: paramsUniform.buffer,
@@ -86,20 +92,19 @@ export function createCloudsLayer(
       );
       const rayDir = std.normalize(d.vec3f(screenPos.x, screenPos.y, FOV_FACTOR));
 
+      // Upstream sun lobe (same math) — safe because sky midtones are soft pastels
       const sunDot = std.saturate(std.dot(rayDir, sunDir));
       const sunGlow = std.pow(
         sunDot,
         1 / (SUN_BRIGHTNESS * SUN_BRIGHTNESS * SUN_BRIGHTNESS),
       );
 
-      let skyCol = SKY_BASE + SKY_WARM * (1.0 - std.abs(rayDir.y)) * 0.42;
-      skyCol += SUN_COLOR * sunGlow * 0.7;
-      // Cool cyan lift opposite the warm sun — more Holi sky contrast
-      skyCol += d.vec3f(0.02, 0.12, 0.22) * std.saturate(-rayDir.x * 0.5 + 0.2);
+      // Upstream sky: continuous horizon/zenith + sun glow (no near-black base)
+      let skyCol = SKY_HORIZON - SKY_ZENITH_TINT * rayDir.y * 0.35;
+      skyCol += SUN_GLOW * sunGlow;
 
       const cloudCol = raymarch(rayOrigin, rayDir, sunDir);
-      // No screen-space UV hash deband — locked dither reads as hatch on soft gradients
-      const finalCol = skyCol * (1.0 - cloudCol.a) + cloudCol.rgb;
+      const finalCol = skyCol * (1.1 - cloudCol.a) + cloudCol.rgb;
       return d.vec4f(finalCol, 1.0);
     },
     targets: { format: presentationFormat },
@@ -115,7 +120,7 @@ export function createCloudsLayer(
         .with(bindGroup)
         .withColorAttachment({
           view: context,
-          clearValue: [0.006, 0.005, 0.032, 1],
+          clearValue: [0.02, 0.01, 0.04, 1],
           loadOp: 'clear',
         })
         .draw(3);
