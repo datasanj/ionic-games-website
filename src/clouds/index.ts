@@ -1,7 +1,7 @@
 // @ts-nocheck — TypeGPU operator overloads are transformed by unplugin-typegpu
 /**
  * TypeGPU Clouds backdrop — restored upstream sky + texture noise.
- * Holi via soft pastel sky/sun constants (not near-black + blown yellow).
+ * Soft dark-purple sky midtones; Holi pigment punch lives in the volume.
  * https://docs.swmansion.com/TypeGPU/examples/#example=rendering--clouds
  */
 import type { TgpuRoot } from 'typegpu';
@@ -121,7 +121,7 @@ export function createCloudsLayer(
         .with(bindGroup)
         .withColorAttachment({
           view: context,
-          clearValue: [0.02, 0.01, 0.04, 1],
+          clearValue: [0.06, 0.03, 0.12, 1],
           loadOp: 'clear',
         })
         .draw(3);

@@ -154,30 +154,37 @@ export const raymarch = tgpu.fn(
         fold * 0.92,
       );
 
-      // Bright gulal slabs (yellow↔lime) — world phase, not sun half-plane
+      // Airy body → plum↔magenta purple (kills beige saffron fills)
+      color = std.mix(
+        color,
+        std.mix(HOLI_PLUM, HOLI_MAGENTA, brightPick),
+        brightFamily * (0.5 + airy * 0.4),
+      );
+
+      // Yellow↔lime as Holi sparks only — not large beige slabs
       color = std.mix(
         color,
         std.mix(HOLI_YELLOW, HOLI_LIME, brightPick),
-        brightFamily * (0.45 + airy * 0.5),
+        brightFamily * airy * 0.22,
       );
 
       // Extra dark-family mid volumes so crimson/plum aren't only tiny folds
       color = std.mix(
         color,
         std.mix(HOLI_CRIMSON, HOLI_PLUM, darkPick),
-        (1.0 - brightFamily) * airy * 0.35,
+        (1.0 - brightFamily) * airy * 0.4,
       );
 
-      // Magenta / saffron accents so more Holi hues coexist
+      // Magenta / deep-violet accents (HOLI_SAFFRON is violet here)
       color = std.mix(
         color,
         HOLI_MAGENTA,
-        festPick * (1.0 - brightFamily) * 0.38,
+        festPick * (1.0 - brightFamily) * 0.42,
       );
       color = std.mix(
         color,
         HOLI_SAFFRON,
-        (1.0 - festPick) * brightFamily * airy * 0.32,
+        (1.0 - festPick) * brightFamily * airy * 0.36,
       );
 
       const lit = color * lightAmt;
