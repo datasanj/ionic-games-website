@@ -8,31 +8,10 @@
  * Perf: half-res clouds (CSS upscale), alternate-frame cloud updates,
  * visibility pause — tunnel stays full-rate / full quality.
  */
-import tgpu, { d } from 'typegpu';
-import {
-  abs,
-  add,
-  atan2,
-  cos,
-  div,
-  gt,
-  length,
-  mul,
-  normalize,
-  select,
-  sign,
-  smoothstep,
-  saturate,
-  sub,
-  tanh,
-} from 'typegpu/std';
+import tgpu from 'typegpu';
 import { createCloudsLayer } from './clouds/index.ts';
+import { createTunnelLayer } from './tunnel.ts';
 import './style.css';
-
-const safeTanh = (v: d.v3f) => {
-  'use gpu';
-  return select(tanh(v), sign(v), gt(abs(v), d.vec3f(10)));
-};
 
 const tunnelEl = document.querySelector<HTMLCanvasElement>('#tunnel');
 const cloudsEl = document.querySelector<HTMLCanvasElement>('#clouds');
@@ -78,118 +57,8 @@ async function start() {
     adapter: { powerPreference: 'high-performance' },
   });
 
-  const Params = d.struct({
-    time: d.f32,
-    aspectRatio: d.f32,
-    cameraPos: d.vec2f,
-    /** Max XY bend of the tunnel path at vanishing depth (pointer units). */
-    steerOffset: d.vec2f,
-    tunnelDepth: d.i32,
-    bigStrips: d.f32,
-    smallStrips: d.f32,
-    dollyZoom: d.f32,
-    color: d.vec3f,
-  });
-
-  // Upstream Centrifuge 2 defaults (depth 50, tone 0.005, color formula)
-  const paramsUniform = root.createUniform(Params, {
-    time: 0,
-    aspectRatio: tunnelCanvas.clientWidth / tunnelCanvas.clientHeight,
-    cameraPos: d.vec2f(0, -7),
-    steerOffset: d.vec2f(0, 0),
-    tunnelDepth: 55,
-    bigStrips: 10,
-    smallStrips: 5,
-    dollyZoom: 0.2,
-    // Upstream-style modulation with Holi-leaning magenta bias
-    color: d.vec3f(0.32, 0.06, 0.28),
-  });
-
-  const tunnelRadius = 11;
-  const moveSpeed = 5;
-  /** Max far-end path bend in tunnel XY (pointer −1‥1 → world offset). */
-  const FAR_STEER = 5.5;
-  /** March distance where pointer influence begins (near/mid field stays put). */
-  const STEER_NEAR_Z = 24;
-  /** March distance where pointer influence is full (vanishing rings). */
-  const STEER_FAR_Z = 52;
-  const BASE_CAMERA_Y = -7;
-
-  const fragmentMain = tgpu.fragmentFn({
-    in: { uv: d.vec2f },
-    out: d.vec4f,
-  })(({ uv }) => {
-    'use gpu';
-    const params = paramsUniform.$;
-    const ratio = d.vec2f(params.aspectRatio, 1);
-    // Fixed look — camera / near tunnel never follow the pointer
-    const dir = normalize(d.vec3f(mul(uv, ratio), -1));
-
-    let z = d.f32(0);
-    let acc = d.vec3f();
-    for (let i = 0; i < params.tunnelDepth; i++) {
-      const p = mul(dir, z);
-      p.x += params.cameraPos.x;
-      p.y += params.cameraPos.y;
-
-      // Far-only steer: 0 through near/mid, ramps hard at vanishing distance.
-      // Squared smoothstep keeps mid rings locked; only deep incoming rings bend.
-      const farT = smoothstep(d.f32(STEER_NEAR_Z), d.f32(STEER_FAR_Z), z);
-      const farW = mul(farT, farT);
-      p.x += mul(params.steerOffset.x, farW);
-      p.y += mul(params.steerOffset.y, farW);
-
-      // Classic centrifuge coords (upstream TypeGPU / XorDev)
-      const coords = d.vec3f(
-        add(mul(atan2(p.y, p.x), params.bigStrips), params.time),
-        sub(mul(p.z, params.dollyZoom), mul(moveSpeed, params.time)),
-        sub(length(p.xy), tunnelRadius),
-      );
-
-      const coords2 = sub(
-        cos(add(coords, cos(mul(coords, params.smallStrips)))),
-        1,
-      );
-      // Upstream dd — no artificial clamp that softens strips
-      const dd = sub(mul(length(d.vec4f(coords.z, coords2)), 0.5), 0.1);
-
-      // Upstream color accumulation: (1.2 - cos(color * p.z)) / dd
-      acc = add(acc, div(sub(1.2, cos(mul(params.color, p.z))), dd));
-      z = add(z, dd);
-    }
-
-    // Upstream tone mapping (0.005) — restores strip brightness/contrast
-    acc = safeTanh(mul(acc, 0.005));
-    const luma = add(
-      add(mul(acc.x, 0.2126), mul(acc.y, 0.7152)),
-      mul(acc.z, 0.0722),
-    );
-    // Soft luminance key: true darks transparent for Holi clouds; mid/bright
-    // streaks keep near-full intensity (no squared alpha floor)
-    const alpha = saturate(smoothstep(0.003, 0.09, luma));
-    return d.vec4f(mul(acc, alpha), alpha);
-  });
-
-  const vertexMain = tgpu.vertexFn({
-    in: { vertexIndex: d.builtin.vertexIndex },
-    out: { pos: d.builtin.position, uv: d.vec2f },
-  })((input) => {
-    const pos = [d.vec2f(-1, -1), d.vec2f(3, -1), d.vec2f(-1, 3)];
-    return {
-      pos: d.vec4f(pos[input.vertexIndex], 0, 1),
-      uv: pos[input.vertexIndex],
-    };
-  });
-
-  const tunnelContext = root.configureContext({
-    canvas: tunnelCanvas,
-    alphaMode: 'premultiplied',
-  });
-
-  const tunnelPipeline = root.createRenderPipeline({
-    vertex: vertexMain,
-    fragment: fragmentMain,
-  });
+  const tunnel = createTunnelLayer(root, tunnelCanvas);
+  tunnel.resize();
 
   const clouds = createCloudsLayer(root, cloudsCanvas);
   clouds.resize();
@@ -215,14 +84,26 @@ async function start() {
   const onResize = () => {
     resizeCanvas(tunnelCanvas, { maxDpr: TUNNEL_MAX_DPR });
     resizeCanvas(cloudsCanvas, { maxDpr: CLOUDS_MAX_DPR, scale: CLOUDS_SCALE });
+    tunnel.resize();
     clouds.resize();
   };
   window.addEventListener('resize', onResize);
 
+  /**
+   * Restarting the loop on `visible` without tracking the outstanding handle
+   * can leave two loops running, since a callback queued before the tab was
+   * hidden may still be pending. Tracking the handle makes the loop
+   * single-instance by construction.
+   */
+  let frameHandle = 0;
+  const schedule = () => {
+    if (frameHandle === 0) frameHandle = requestAnimationFrame(draw);
+  };
+
   const onVisibility = () => {
     if (document.visibilityState === 'visible' && running) {
       lastTs = 0;
-      requestAnimationFrame(draw);
+      schedule();
     }
   };
   document.addEventListener('visibilitychange', onVisibility);
@@ -246,6 +127,7 @@ async function start() {
   document.documentElement.addEventListener('pointerleave', onPointerLeave);
 
   function draw(timestamp: number) {
+    frameHandle = 0;
     if (!running) return;
     if (document.visibilityState === 'hidden') return;
 
@@ -261,42 +143,28 @@ async function start() {
     pointerSmoothX += (pointerTargetX - pointerSmoothX) * POINTER_SMOOTH;
     pointerSmoothY += (pointerTargetY - pointerSmoothY) * POINTER_SMOOTH;
 
-    // Positive steer: far rings bend toward cursor; camera / near field fixed
-    paramsUniform.patch({
-      aspectRatio: tunnelCanvas.clientWidth / tunnelCanvas.clientHeight,
-      time: (timestamp * 0.001) % 1000,
-      cameraPos: d.vec2f(0, BASE_CAMERA_Y),
-      // Negate: SDF samples p+offset ⇒ cylinder axis at −offset; match cursor
-      steerOffset: d.vec2f(
-        -pointerSmoothX * FAR_STEER,
-        -pointerSmoothY * FAR_STEER,
-      ),
-    });
-
     try {
       // Half-res clouds + stride: ~4–8× less cloud GPU work vs every-frame 1×
       if (frameIndex % cloudStride === 0) {
         clouds.draw(timestamp);
       }
-      tunnelPipeline
-        .withColorAttachment({
-          view: tunnelContext,
-          clearValue: [0, 0, 0, 0],
-          loadOp: 'clear',
-        })
-        .draw(3);
+      tunnel.draw(timestamp, pointerSmoothX, pointerSmoothY);
     } catch (err) {
       console.error(err);
     }
 
     frameIndex += 1;
-    requestAnimationFrame(draw);
+    schedule();
   }
 
-  requestAnimationFrame(draw);
+  schedule();
 
   window.addEventListener('pagehide', () => {
     running = false;
+    if (frameHandle !== 0) {
+      cancelAnimationFrame(frameHandle);
+      frameHandle = 0;
+    }
     window.removeEventListener('resize', onResize);
     window.removeEventListener('pointermove', onPointerMove);
     document.documentElement.removeEventListener('pointerleave', onPointerLeave);

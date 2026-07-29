@@ -28,18 +28,15 @@ export function createCloudsLayer(
   root: TgpuRoot,
   canvas: HTMLCanvasElement,
 ): CloudsLayer {
+  // The fragment shader always writes alpha 1, so the compositor gains nothing
+  // from a premultiplied blend over the page — declare the surface opaque.
   const context = root.configureContext({
     canvas,
-    alphaMode: 'premultiplied',
+    alphaMode: 'opaque',
   });
   const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
 
-  const paramsUniform = root.createUniform(CloudsParams, {
-    time: 0,
-    // Keep volume richness; half-res + alternate-frame carry the FPS win
-    maxSteps: 56,
-    maxDistance: 10.5,
-  });
+  const paramsUniform = root.createUniform(CloudsParams, { time: 0 });
   const resolutionUniform = root.createUniform(
     d.vec2f,
     d.vec2f(canvas.width, canvas.height),
@@ -111,20 +108,25 @@ export function createCloudsLayer(
     targets: { format: presentationFormat },
   });
 
+  // Hoisted so the draw loop allocates nothing per frame.
+  const resolution = d.vec2f(canvas.width, canvas.height);
+  const attachment = {
+    view: context,
+    clearValue: [0.06, 0.03, 0.12, 1],
+    loadOp: 'clear' as const,
+  };
+  const patch = { time: 0 };
+
   return {
     resize() {
-      resolutionUniform.write(d.vec2f(canvas.width, canvas.height));
+      resolution.x = canvas.width;
+      resolution.y = canvas.height;
+      resolutionUniform.write(resolution);
     },
     draw(timestamp: number) {
-      paramsUniform.patch({ time: (timestamp / 1000) % 500 });
-      pipeline
-        .with(bindGroup)
-        .withColorAttachment({
-          view: context,
-          clearValue: [0.06, 0.03, 0.12, 1],
-          loadOp: 'clear',
-        })
-        .draw(3);
+      patch.time = (timestamp / 1000) % 500;
+      paramsUniform.write(patch);
+      pipeline.with(bindGroup).withColorAttachment(attachment).draw(3);
     },
   };
 }

@@ -14,6 +14,8 @@ import {
   CLOUD_COVERAGE,
   CLOUD_DARK,
   CLOUD_FREQUENCY,
+  CLOUD_MAX_DISTANCE,
+  CLOUD_MAX_STEPS,
   FBM_LACUNARITY,
   FBM_OCTAVES,
   FBM_PERSISTENCE,
@@ -23,8 +25,8 @@ import {
   HOLI_PLUM,
   HOLI_SAFFRON,
   HOLI_YELLOW,
+  INV_NOISE_TEXTURE_SIZE,
   LIGHT_ABSORPTION,
-  NOISE_TEXTURE_SIZE,
   NOISE_Z_OFFSET,
   SUN_BRIGHTNESS,
 } from './consts.ts';
@@ -35,15 +37,18 @@ const noise3d = tgpu.fn(
   d.f32,
 )((pos) => {
   'use gpu';
-  const idx = std.floor(pos);
-  const frac = std.fract(pos);
-  const smooth = frac * frac * (3 - 2 * frac);
+  // floor(p) + fract(p) reconstructs p exactly, so index the xy lattice from
+  // pos directly, and only the z lerp weight is actually needed.
+  const idxZ = std.floor(pos.z);
+  const fracZ = pos.z - idxZ;
+  const smoothZ = fracZ * fracZ * (3 - 2 * fracZ);
 
+  // 1/256 is exact in binary, so this matches the original divide bit for bit.
   const texCoord0 = std.fract(
-    (idx.xy + frac.xy + NOISE_Z_OFFSET * idx.z) / NOISE_TEXTURE_SIZE,
+    (pos.xy + NOISE_Z_OFFSET * idxZ) * INV_NOISE_TEXTURE_SIZE,
   );
   const texCoord1 = std.fract(
-    (idx.xy + frac.xy + NOISE_Z_OFFSET * (idx.z + 1)) / NOISE_TEXTURE_SIZE,
+    (pos.xy + NOISE_Z_OFFSET * (idxZ + 1)) * INV_NOISE_TEXTURE_SIZE,
   );
 
   const val0 = std.textureSampleLevel(
@@ -60,28 +65,63 @@ const noise3d = tgpu.fn(
     0,
   ).x;
 
-  return std.mix(val0, val1, smooth.z) * 2 - 1;
+  return std.mix(val0, val1, smoothZ) * 2 - 1;
 });
 
-function fbm(pos: d.v3f): number {
-  'use gpu';
-  let sum = d.f32();
+/**
+ * How far every octave after the first can move the FBM sum. noise3d is in
+ * [-1, 1], so this is just the sum of the remaining amplitudes, plus a slack
+ * term so float rounding can never make the bound optimistic.
+ */
+const TAIL_BOUND = (() => {
+  let sum = 1e-4;
+  for (let i = 1; i < FBM_OCTAVES; i++) {
+    sum += Math.abs(CLOUD_AMPLITUDE * FBM_PERSISTENCE ** i);
+  }
+  return sum;
+})();
 
-  for (const i of tgpu.unroll(std.range(FBM_OCTAVES))) {
+/** Adds octaves 1..N-1 onto an already-computed octave 0, in the original order. */
+function fbmFrom(head: number, pos: d.v3f): number {
+  'use gpu';
+  let sum = head;
+
+  for (const i of tgpu.unroll(std.range(FBM_OCTAVES - 1))) {
     sum +=
-      noise3d(pos * (CLOUD_FREQUENCY * FBM_LACUNARITY ** i)) *
-      (CLOUD_AMPLITUDE * FBM_PERSISTENCE ** i);
+      noise3d(pos * (CLOUD_FREQUENCY * FBM_LACUNARITY ** (i + 1))) *
+      (CLOUD_AMPLITUDE * FBM_PERSISTENCE ** (i + 1));
   }
 
   return sum;
 }
 
+/**
+ * Density of the volume at `pos`; <= 0 means "nothing here".
+ *
+ * Octave 0 carries 2/3 of the FBM amplitude, and the tail octaves can only
+ * move the sum by ±TAIL_BOUND. When octave 0 alone already puts the sum
+ * outside the window where saturate() can still respond, the tail's four
+ * texture fetches are skipped. This is exact rather than an approximation:
+ * in the empty case the caller's `density > 0` test fails either way, and in
+ * the saturated case the returned 0.5 is the value saturate() would produce.
+ * The unskipped path sums octaves in the original order, so it is bit-exact.
+ */
 const sampleDensity = tgpu.fn(
   [d.vec3f],
   d.f32,
 )((pos) => {
+  'use gpu';
   const coverage = CLOUD_COVERAGE - std.abs(pos.y) * 0.25;
-  return std.saturate(fbm(pos) + coverage) - 0.5;
+  const head = noise3d(pos * CLOUD_FREQUENCY) * CLOUD_AMPLITUDE;
+  const headSum = head + coverage;
+
+  if (headSum + TAIL_BOUND <= 0.5) {
+    return -0.5;
+  }
+  if (headSum - TAIL_BOUND >= 1) {
+    return 0.5;
+  }
+  return std.saturate(fbmFrom(head, pos) + coverage) - 0.5;
 });
 
 const sampleDensityCheap = (pos: d.v3f): number => {
@@ -97,15 +137,12 @@ export const raymarch = tgpu.fn(
   'use gpu';
   let accum = d.vec4f();
 
-  const params = cloudsLayout.$.params;
-  const maxSteps = params.maxSteps;
-  const maxDepth = params.maxDistance;
-
-  const stepSize = 1 / maxSteps;
+  const maxDepth = CLOUD_MAX_DISTANCE;
+  const stepSize = 1 / CLOUD_MAX_STEPS;
   // Fixed offset (upstream uses randf) — avoids locked screen-door dither
   let dist = stepSize * 0.5;
 
-  for (let i = 0; i < maxSteps; i++) {
+  for (let i = 0; i < CLOUD_MAX_STEPS; i++) {
     const samplePos = rayOrigin + rayDir * dist * maxDepth;
     const cloudDensity = sampleDensity(samplePos);
 

@@ -55,3 +55,12 @@ export const SUN_GLOW = d.vec3f(0.38, 0.14, 0.55);
 
 export const NOISE_Z_OFFSET = d.vec2f(37.0, 239.0);
 export const NOISE_TEXTURE_SIZE = 256;
+/** Power of two, so multiplying by this is bit-identical to dividing. */
+export const INV_NOISE_TEXTURE_SIZE = 1 / NOISE_TEXTURE_SIZE;
+
+/**
+ * March budget. Fixed for the whole run, so these are constants rather than
+ * uniform fields: the loop bound is static and the step size const-folds.
+ */
+export const CLOUD_MAX_STEPS = 56;
+export const CLOUD_MAX_DISTANCE = 10.5;
