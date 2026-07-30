@@ -1,10 +1,11 @@
 /**
  * Centrifuge 2 tunnel layer (upstream TypeGPU intensity, darks keyed to alpha).
  *
- * Steering works like flying, not like a screen-space warp. The pointer offset
- * is imprinted on a ring at the moment it spawns at the far end, and then
- * rides in with that ring: moving the cursor carves a path, and you watch the
- * path you carved flow toward you. See STEERING below.
+ * Steering works like flying, not like a screen-space warp. The pointer
+ * direction is imprinted on a ring at the moment it spawns at the far end, and
+ * then rides in with that ring: moving the cursor carves a path, and you watch
+ * the path you carved flow toward you. A newly spawned ring is centred exactly
+ * under the cursor. See STEERING below.
  *
  * Perf: everything that never changes at runtime (march depth, strip counts,
  * dolly, camera, colour) is a module constant rather than a uniform field, so
@@ -81,16 +82,80 @@ const INV_HISTORY_DT = 1 / HISTORY_DT;
 /** Converts an axial depth delta straight into a trail index delta. */
 const AGE_TO_INDEX = INV_RING_SPEED * INV_HISTORY_DT;
 
-/** Pointer NDC → world offset of the tube centre. */
-const STEER_GAIN = 3.2;
+/* ------------------------------ UNPROJECTION ----------------------------
+ *
+ * Where the cursor actually is, in world units, solved from the shader's own
+ * ray construction rather than tuned by hand.
+ *
+ * The march samples `p = dir*z + (0, CAMERA_Y, 0) + off` with
+ * `dir = normalize(vec3(uv * vec2(aspect, 1), -1))`, and the tube is
+ * `length(p.xy) - TUNNEL_RADIUS`, so the tube axis sits at world `-off`.
+ * Because `dir * z` collapses to `vec3(uv.x*aspect, uv.y, -1) * D` at axial
+ * depth `D = -dir.z * z`, the camera ray through pointer NDC (mx, my) passes
+ * through world `(mx*aspect*D, my*D + CAMERA_Y)`. Equating the two:
+ *
+ *   off(D) = (-mx*aspect*D, -my*D - CAMERA_Y)
+ *
+ * The lateral term is *linear in depth*, which is the whole game. A constant
+ * offset — what this used to apply — projects to `off/D` and therefore decays
+ * to nothing at the far end: it can never move the vanishing point no matter
+ * how large it is, which is why the old effect read as invisible. It also
+ * could not be made large: exact unprojection of a corner cursor as a constant
+ * offset needs 157 world units, putting the camera 153 units from the axis of
+ * an 11-unit tube (a radius of ~153 would be required to contain it).
+ *
+ * The depth-linear form has none of that trouble. `off(0) = 0`, so the axis
+ * passes through the same place it always did and the camera keeps its 7-unit
+ * off-axis perch inside the wall by construction — the wall-clipping clamp
+ * that used to cap this at 3.4 units is simply not a constraint any more.
+ * ------------------------------------------------------------------------ */
+
 /**
- * The offset now persists all the way in, so it also displaces the tube around
- * the camera. The camera sits 7 units off-axis in an 11-unit tube, so the
- * offset has to stay under ~4 or the camera ends up outside the wall and the
- * strip maths degenerates. 3.4 keeps ~0.6 units of margin at the worst-case
- * diagonal.
+ * Tilt at which the soft knee starts, and the hard ceiling it eases toward.
+ * A 16:10 viewport reaches tilt 1.51 at the corner of the middle 80% of the
+ * screen and 1.89 at the true corner, so the knee sits above the former: the
+ * whole usable middle of the viewport tracks the cursor exactly, and only the
+ * last sliver toward the corners is softened.
  */
-const MAX_OFFSET = 3.4;
+const STEER_KNEE = 1.55;
+const MAX_STEER = 2.1;
+
+/** Writes into `out` rather than returning, to keep the draw loop allocation-free. */
+export const steerFor = (
+  ndcX: number,
+  ndcY: number,
+  aspect: number,
+  out: { x: number; y: number },
+) => {
+  let sx = -ndcX * aspect;
+  let sy = -ndcY;
+  // Tangent of the angle between the tube axis and the view axis. Full
+  // unprojection (gain 1) holds until the tube is tilted far enough that the
+  // march starts skating along the wall; past the knee it eases off.
+  const tilt = Math.hypot(sx, sy);
+  if (tilt > STEER_KNEE) {
+    const room = MAX_STEER - STEER_KNEE;
+    const eased = STEER_KNEE + room * Math.tanh((tilt - STEER_KNEE) / room);
+    const scale = eased / tilt;
+    sx *= scale;
+    sy *= scale;
+  }
+  out.x = sx;
+  out.y = sy;
+};
+
+/**
+ * The `-CAMERA_Y` term of the unprojection is a constant, so applying it at
+ * full strength would drag the axis through the camera and flatten the
+ * off-axis Centrifuge perch that gives the near wall its rush. Ramping it in
+ * over the first stretch of depth keeps the near geometry exactly as it was
+ * while letting the far end sit precisely on the cursor ray. Smoothstep, not a
+ * clamp, so the axis has no kink at a fixed depth for a stationary ring
+ * artifact to latch onto.
+ */
+const AXIS_SETTLE_DEPTH = 26;
+const INV_AXIS_SETTLE_DEPTH = 1 / AXIS_SETTLE_DEPTH;
+const AXIS_LIFT = -CAMERA_Y;
 
 export type TunnelLayer = {
   /** steerX/steerY are smoothed pointer NDC (−1‥1, y-up). */
@@ -163,14 +228,18 @@ export function createTunnelLayer(
     //   axialDepth = -dir.z * z, age = (SPAWN_DEPTH - axialDepth)/RING_SPEED
     //   hp = age/HISTORY_DT - histFrac  =  hpBase - hpSlope * z
     // so both coefficients hoist out of the march entirely.
+    // Axial depth is affine in the march distance: depth = dz * z.
+    const dz = mul(dir.z, -1);
     const hpBase = sub(SPAWN_DEPTH * AGE_TO_INDEX, params.histFrac);
-    const hpSlope = mul(mul(dir.z, -1), AGE_TO_INDEX);
+    const hpSlope = mul(dz, AGE_TO_INDEX);
+    const settleSlope = mul(dz, INV_AXIS_SETTLE_DEPTH);
 
     let z = d.f32(0);
     let acc = d.vec3f();
     for (let i = 0; i < TUNNEL_DEPTH; i++) {
       const p = mul(dir, z);
       p.y += CAMERA_Y;
+      const depth = mul(dz, z);
 
       // Offset this slice of tube by whatever the cursor was doing when this
       // ring spawned, interpolated between trail samples so it flows smoothly
@@ -178,9 +247,17 @@ export function createTunnelLayer(
       const hp = clamp(sub(hpBase, mul(hpSlope, z)), 0, HISTORY_LEN - 1);
       const hi = floor(hp);
       const pair = trail.pairs[d.i32(hi)];
-      const off = mix(pair.xy, pair.zw, sub(hp, hi));
-      p.x += off.x;
-      p.y += off.y;
+      const steer = mix(pair.xy, pair.zw, sub(hp, hi));
+
+      // Unprojection: the axis rides the camera ray through the cursor, so the
+      // lateral offset scales with depth and the ring this slice belongs to is
+      // centred exactly where the pointer was when it spawned.
+      const settle = saturate(mul(settleSlope, z));
+      p.x += mul(steer.x, depth);
+      p.y += add(
+        mul(steer.y, depth),
+        mul(AXIS_LIFT, mul(mul(settle, settle), sub(3, mul(2, settle)))),
+      );
 
       // Classic centrifuge coords (upstream TypeGPU / XorDev)
       const coords = d.vec3f(
@@ -240,6 +317,7 @@ export function createTunnelLayer(
     loadOp: 'clear' as const,
   };
   const patch = { time: 0, aspectRatio: 1, histFrac: 0, pad: 0 };
+  const steerOut = { x: 0, y: 0 };
 
   /** Wall-clock (seconds) at which the newest trail sample was taken. */
   let lastSampleTime = -1;
@@ -252,16 +330,11 @@ export function createTunnelLayer(
     draw(timestamp: number, steerX: number, steerY: number) {
       const now = timestamp * 0.001;
 
-      // Negate: the march samples p + offset, so the tube centre lands at
-      // −offset — this way the tunnel bends toward the cursor.
-      let ox = -steerX * STEER_GAIN;
-      let oy = -steerY * STEER_GAIN;
-      const mag = Math.hypot(ox, oy);
-      if (mag > MAX_OFFSET) {
-        const s = MAX_OFFSET / mag;
-        ox *= s;
-        oy *= s;
-      }
+      // Negated inside steerFor: the march samples p + offset, so the tube
+      // centre lands at −offset — this way the tunnel bends toward the cursor.
+      steerFor(steerX, steerY, patch.aspectRatio, steerOut);
+      const ox = steerOut.x;
+      const oy = steerOut.y;
 
       let dirty = false;
       if (lastSampleTime < 0 || now - lastSampleTime > TRAVEL_TIME) {
