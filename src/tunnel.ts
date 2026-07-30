@@ -1,11 +1,14 @@
 /**
  * Centrifuge 2 tunnel layer (upstream TypeGPU intensity, darks keyed to alpha).
  *
- * Steering works like flying, not like a screen-space warp. The pointer
- * direction is imprinted on a ring at the moment it spawns at the far end, and
- * then rides in with that ring: moving the cursor carves a path, and you watch
- * the path you carved flow toward you. A newly spawned ring is centred exactly
- * under the cursor. See STEERING below.
+ * Steering works like flying, not like a screen-space warp. A direction is
+ * imprinted on a ring at the moment it spawns at the far end and then rides in
+ * with that ring: moving the cursor carves a path, and you watch the path you
+ * carved flow toward you. The cursor sets the *target* direction — unprojected
+ * so that a fully settled tube points its vanishing point straight at the
+ * pointer — and the spawn direction drifts toward it at a bounded rate, which
+ * is what keeps the carved path a smooth continuous curve instead of a kink.
+ * See STEERING, UNPROJECTION and DRIFT below.
  *
  * Perf: everything that never changes at runtime (march depth, strip counts,
  * dolly, camera, colour) is a module constant rather than a uniform field, so
@@ -119,6 +122,41 @@ const AGE_TO_INDEX = INV_RING_SPEED * INV_HISTORY_DT;
  */
 const STEER_KNEE = 1.55;
 const MAX_STEER = 2.1;
+
+/* --------------------------------- DRIFT --------------------------------
+ *
+ * The unprojected cursor is a *target*, not a position to jump to.
+ *
+ * Because the lateral offset is depth-linear, any change in the imprinted
+ * direction is multiplied by the depth it lands at, so a fast pointer move
+ * shears the tube apart. Rings sit one `2π/(DOLLY_ZOOM*SMALL_STRIPS)` = 6.28
+ * world units apart, which is `6.28/RING_SPEED` = 0.25 s of trail, so a
+ * direction changing at rate r shifts the centres of adjacent rings by
+ * `400 * r * 0.25` screen pixels against an apparent ring radius of only
+ * ~52 px at the far end. Following the raw pointer (smoothed at τ≈0.17 s,
+ * so r can hit ~9/s) means a 900 px stagger — seventeen ring radii, which
+ * reads as a shattered tube rather than a tunnel.
+ *
+ * So the spawn direction eases toward the target instead: a slew cap bounds
+ * the curvature during the big sweep, and an exponential tail lands it on the
+ * target without the velocity step a bare slew limit would leave behind.
+ * ------------------------------------------------------------------------ */
+
+/**
+ * Max change in tube tilt per second. At 0.28 the centres of adjacent rings
+ * land 28 px apart, about half the 52 px apparent radius of a ring at the far
+ * end and a third of it midway, so the centreline still reads as one
+ * continuous curve — while the swing itself passes 7be5b9d's entire 16 px
+ * range within the first half second and keeps going to ~440 px.
+ */
+const DRIFT_SLEW = 0.28;
+/** Exponential time constant for the final approach, once inside the slew cap. */
+const DRIFT_TAU = 1.4;
+/**
+ * A hidden tab or a stalled frame must not cash in as one huge drift step and
+ * put a crease in the tube.
+ */
+const MAX_DRIFT_DT = 0.1;
 
 /** Writes into `out` rather than returning, to keep the draw loop allocation-free. */
 export const steerFor = (
@@ -317,7 +355,11 @@ export function createTunnelLayer(
     loadOp: 'clear' as const,
   };
   const patch = { time: 0, aspectRatio: 1, histFrac: 0, pad: 0 };
-  const steerOut = { x: 0, y: 0 };
+  const steerTarget = { x: 0, y: 0 };
+  /** The direction actually imprinted on rings, easing toward the target. */
+  let driftX = 0;
+  let driftY = 0;
+  let lastDrawTime = -1;
 
   /** Wall-clock (seconds) at which the newest trail sample was taken. */
   let lastSampleTime = -1;
@@ -332,9 +374,30 @@ export function createTunnelLayer(
 
       // Negated inside steerFor: the march samples p + offset, so the tube
       // centre lands at −offset — this way the tunnel bends toward the cursor.
-      steerFor(steerX, steerY, patch.aspectRatio, steerOut);
-      const ox = steerOut.x;
-      const oy = steerOut.y;
+      steerFor(steerX, steerY, patch.aspectRatio, steerTarget);
+
+      // Ease the spawn direction toward that target rather than assigning it,
+      // so consecutive rings stay a smooth curve apart. Slew cap first (bounds
+      // the bend), exponential tail second (lands without a velocity step).
+      const dt =
+        lastDrawTime < 0 ? 0 : Math.min(MAX_DRIFT_DT, now - lastDrawTime);
+      lastDrawTime = now;
+      if (dt > 0) {
+        const ease = 1 - Math.exp(-dt / DRIFT_TAU);
+        let stepX = (steerTarget.x - driftX) * ease;
+        let stepY = (steerTarget.y - driftY) * ease;
+        const step = Math.hypot(stepX, stepY);
+        const maxStep = DRIFT_SLEW * dt;
+        if (step > maxStep) {
+          const k = maxStep / step;
+          stepX *= k;
+          stepY *= k;
+        }
+        driftX += stepX;
+        driftY += stepY;
+      }
+      const ox = driftX;
+      const oy = driftY;
 
       let dirty = false;
       if (lastSampleTime < 0 || now - lastSampleTime > TRAVEL_TIME) {
