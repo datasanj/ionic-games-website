@@ -1,5 +1,5 @@
 /**
- * Clouds backdrop + centrifuge tunnel (transparent darks) + centered logo.
+ * Clouds backdrop + centrifuge tunnel (transparent darks) + studio homepage.
  * Tunnel restored to upstream TypeGPU Centrifuge 2 intensity; darks keyed
  * softly so Holi clouds show through without killing bright streaks.
  * Pointer biases only far/incoming ring generation (depth-scaled); near

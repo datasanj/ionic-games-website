@@ -1,6 +1,10 @@
 :root {
   color-scheme: dark;
   --bg: #050308;
+  --text: rgba(255, 255, 255, 0.92);
+  --muted: rgba(255, 255, 255, 0.68);
+  --card-glow: rgba(140, 210, 255, 0.22);
+  --phone-glow: rgba(255, 186, 72, 0.28);
 }
 
 *,
@@ -16,6 +20,7 @@ body {
   height: 100%;
   overflow: hidden;
   background: var(--bg);
+  font-family: "Segoe UI", system-ui, sans-serif;
 }
 
 #tunnel,
@@ -40,21 +45,176 @@ body {
 .stage {
   position: relative;
   z-index: 2;
-  display: grid;
-  place-items: center;
   width: 100%;
   height: 100%;
-  padding: clamp(1.25rem, 4vw, 3rem);
-  pointer-events: none;
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* Stage must receive scroll; canvases stay none. Cards are the click targets. */
+  pointer-events: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.home {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-height: 100%;
+  padding: clamp(1rem, 3.5vh, 2.4rem) clamp(1rem, 4vw, 2.5rem)
+    clamp(1.5rem, 4vh, 2.75rem);
 }
 
 .logo {
-  width: min(72vw, 720px);
+  display: block;
+  width: min(86vw, 820px);
   height: auto;
+  background: transparent;
   opacity: 0;
   transform: scale(0.96);
   animation: logo-in 1.4s cubic-bezier(0.22, 1, 0.36, 1) 0.2s forwards;
-  filter: drop-shadow(0 0 28px rgba(255, 80, 180, 0.18));
+  filter:
+    drop-shadow(0 8px 18px rgba(0, 0, 0, 0.45))
+    drop-shadow(0 0 28px rgba(255, 80, 180, 0.28))
+    drop-shadow(0 0 48px rgba(80, 180, 255, 0.16));
+}
+
+.shelf {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: flex-end;
+  gap: clamp(1.25rem, 3vw, 2.25rem);
+  width: min(100%, 1120px);
+  margin-top: clamp(0.35rem, 1.8vh, 1.1rem);
+  pointer-events: auto;
+}
+
+.game-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.85rem;
+  width: min(100%, 300px);
+  color: inherit;
+  text-decoration: none;
+  pointer-events: auto;
+  cursor: pointer;
+  transform: translateY(0);
+  transition:
+    transform 0.35s cubic-bezier(0.22, 1, 0.36, 1),
+    filter 0.35s ease;
+}
+
+.game-card:hover,
+.game-card:focus-visible {
+  transform: translateY(-10px);
+  filter: drop-shadow(0 18px 36px rgba(0, 0, 0, 0.45));
+}
+
+.game-card:focus-visible {
+  outline: 2px solid rgba(160, 220, 255, 0.85);
+  outline-offset: 8px;
+  border-radius: 18px;
+}
+
+.game-card__frame {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border-radius: 22px;
+  background: #0b0b12;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.16),
+    0 0 0 7px rgba(10, 10, 16, 0.72),
+    0 22px 48px rgba(0, 0, 0, 0.5),
+    0 0 42px var(--card-glow);
+  transition: box-shadow 0.35s ease;
+}
+
+.game-card:hover .game-card__frame,
+.game-card:focus-visible .game-card__frame {
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.28),
+    0 0 0 7px rgba(12, 12, 20, 0.8),
+    0 28px 56px rgba(0, 0, 0, 0.55),
+    0 0 56px rgba(170, 230, 255, 0.32);
+}
+
+.game-card__art {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+}
+
+.game-card--phone {
+  width: min(100%, 230px);
+}
+
+.game-card__frame--phone {
+  width: 100%;
+  aspect-ratio: 9 / 18.4;
+  padding: 11px 9px 13px;
+  border-radius: 32px;
+  background:
+    linear-gradient(165deg, #4a4a54 0%, #16161c 38%, #07070b 100%);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 22px 48px rgba(0, 0, 0, 0.5),
+    0 0 40px var(--phone-glow);
+}
+
+.game-card:hover .game-card__frame--phone,
+.game-card:focus-visible .game-card__frame--phone {
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    0 28px 56px rgba(0, 0, 0, 0.55),
+    0 0 52px rgba(255, 196, 90, 0.38);
+}
+
+.game-card__frame--phone .game-card__art {
+  border-radius: 22px;
+}
+
+.game-card__bezel {
+  position: absolute;
+  top: 7px;
+  left: 50%;
+  z-index: 1;
+  width: 68px;
+  height: 8px;
+  border-radius: 999px;
+  background: #050508;
+  transform: translateX(-50%);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.game-card__meta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.28rem;
+  text-align: center;
+}
+
+.game-card__title {
+  font-size: 0.98rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  color: var(--text);
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.65);
+}
+
+.game-card__tag {
+  max-width: 16.5rem;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: var(--muted);
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.7);
 }
 
 @keyframes logo-in {
@@ -70,10 +230,24 @@ body {
   z-index: 3;
   margin: 0;
   max-width: 28rem;
-  font-family: "Segoe UI", system-ui, sans-serif;
   font-size: 0.9rem;
   line-height: 1.4;
   color: rgba(255, 255, 255, 0.72);
+}
+
+@media (max-width: 720px) {
+  .logo {
+    width: min(94vw, 640px);
+  }
+
+  .shelf {
+    align-items: center;
+  }
+
+  .game-card,
+  .game-card--phone {
+    width: min(100%, 280px);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -81,5 +255,10 @@ body {
     animation: none;
     opacity: 1;
     transform: none;
+  }
+
+  .game-card,
+  .game-card__frame {
+    transition: none;
   }
 }
