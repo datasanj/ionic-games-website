@@ -3,8 +3,7 @@
   --bg: #050308;
   --text: rgba(255, 255, 255, 0.92);
   --muted: rgba(255, 255, 255, 0.68);
-  --card-glow: rgba(140, 210, 255, 0.22);
-  --phone-glow: rgba(255, 186, 72, 0.28);
+  --phone-glow: rgba(160, 200, 255, 0.26);
 }
 
 *,
@@ -49,7 +48,7 @@ body {
   height: 100%;
   overflow-x: hidden;
   overflow-y: auto;
-  /* Stage must receive scroll; canvases stay none. Cards are the click targets. */
+  /* Stage scrolls; canvases stay none. Cards are the click targets. */
   pointer-events: auto;
   -webkit-overflow-scrolling: touch;
 }
@@ -81,10 +80,10 @@ body {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  align-items: flex-end;
-  gap: clamp(1.25rem, 3vw, 2.25rem);
-  width: min(100%, 1120px);
-  margin-top: clamp(0.35rem, 1.8vh, 1.1rem);
+  align-items: flex-start;
+  gap: clamp(1.1rem, 2.8vw, 2rem);
+  width: min(100%, 980px);
+  margin-top: clamp(0.2rem, 1.4vh, 0.85rem);
   pointer-events: auto;
 }
 
@@ -92,8 +91,8 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.85rem;
-  width: min(100%, 300px);
+  gap: 0.8rem;
+  width: min(100%, 210px);
   color: inherit;
   text-decoration: none;
   pointer-events: auto;
@@ -116,29 +115,30 @@ body {
   border-radius: 18px;
 }
 
-.game-card__frame {
+.game-card__phone {
   position: relative;
   display: block;
   width: 100%;
-  aspect-ratio: 4 / 3;
+  aspect-ratio: 9 / 18.6;
+  padding: 11px 9px 13px;
   overflow: hidden;
-  border-radius: 22px;
-  background: #0b0b12;
+  border-radius: 32px;
+  background: linear-gradient(165deg, #4a4a54 0%, #16161c 38%, #07070b 100%);
   box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.16),
-    0 0 0 7px rgba(10, 10, 16, 0.72),
+    0 0 0 1px rgba(255, 255, 255, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.24),
     0 22px 48px rgba(0, 0, 0, 0.5),
-    0 0 42px var(--card-glow);
+    0 0 40px var(--phone-glow);
   transition: box-shadow 0.35s ease;
 }
 
-.game-card:hover .game-card__frame,
-.game-card:focus-visible .game-card__frame {
+.game-card:hover .game-card__phone,
+.game-card:focus-visible .game-card__phone {
   box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.28),
-    0 0 0 7px rgba(12, 12, 20, 0.8),
+    0 0 0 1px rgba(255, 255, 255, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
     0 28px 56px rgba(0, 0, 0, 0.55),
-    0 0 56px rgba(170, 230, 255, 0.32);
+    0 0 56px rgba(170, 220, 255, 0.38);
 }
 
 .game-card__art {
@@ -146,41 +146,11 @@ body {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  object-position: center;
-}
-
-.game-card--phone {
-  width: min(100%, 230px);
-}
-
-.game-card__frame--phone {
-  width: 100%;
-  aspect-ratio: 9 / 18.4;
-  padding: 11px 9px 13px;
-  border-radius: 32px;
-  background:
-    linear-gradient(165deg, #4a4a54 0%, #16161c 38%, #07070b 100%);
-  box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.2),
-    inset 0 1px 0 rgba(255, 255, 255, 0.22),
-    0 22px 48px rgba(0, 0, 0, 0.5),
-    0 0 40px var(--phone-glow);
-}
-
-.game-card:hover .game-card__frame--phone,
-.game-card:focus-visible .game-card__frame--phone {
-  box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.32),
-    inset 0 1px 0 rgba(255, 255, 255, 0.28),
-    0 28px 56px rgba(0, 0, 0, 0.55),
-    0 0 52px rgba(255, 196, 90, 0.38);
-}
-
-.game-card__frame--phone .game-card__art {
+  object-position: center top;
   border-radius: 22px;
 }
 
-.game-card__bezel {
+.game-card__notch {
   position: absolute;
   top: 7px;
   left: 50%;
@@ -202,7 +172,7 @@ body {
 }
 
 .game-card__title {
-  font-size: 0.98rem;
+  font-size: 0.95rem;
   font-weight: 650;
   letter-spacing: 0.01em;
   color: var(--text);
@@ -210,8 +180,8 @@ body {
 }
 
 .game-card__tag {
-  max-width: 16.5rem;
-  font-size: 0.78rem;
+  max-width: 13.5rem;
+  font-size: 0.76rem;
   line-height: 1.35;
   color: var(--muted);
   text-shadow: 0 2px 10px rgba(0, 0, 0, 0.7);
@@ -244,9 +214,8 @@ body {
     align-items: center;
   }
 
-  .game-card,
-  .game-card--phone {
-    width: min(100%, 280px);
+  .game-card {
+    width: min(72vw, 240px);
   }
 }
 
@@ -258,7 +227,7 @@ body {
   }
 
   .game-card,
-  .game-card__frame {
+  .game-card__phone {
     transition: none;
   }
 }
