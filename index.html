@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Ionic Games" />
+    <meta name="description" content="Ionic Games — original browser games." />
     <title>Ionic Games</title>
   </head>
   <body>
@@ -12,13 +12,77 @@
     <canvas id="clouds" aria-hidden="true"></canvas>
     <canvas id="tunnel" aria-hidden="true"></canvas>
     <main class="stage">
-      <img
-        class="logo"
-        src="/ionic-games-logo.png"
-        alt="Ionic Games"
-        width="882"
-        height="552"
-      />
+      <div class="home">
+        <img
+          class="logo"
+          src="/ionic-games-logo.png"
+          alt="ionic.games"
+          width="882"
+          height="552"
+        />
+        <section class="shelf" aria-label="Games">
+          <a
+            class="game-card"
+            href="https://mango-mash.com"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <span class="game-card__phone">
+              <img
+                class="game-card__art"
+                src="/mango-mash-phone.png"
+                alt="Mango Mash match-3 on a tropical beach"
+                width="1024"
+                height="1536"
+              />
+            </span>
+            <span class="game-card__meta">
+              <span class="game-card__title">mango-mash.com</span>
+              <span class="game-card__tag">A juicy twist on the classic match-3 game!</span>
+            </span>
+          </a>
+          <a
+            class="game-card"
+            href="https://chaintycoon.com"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <span class="game-card__phone">
+              <img
+                class="game-card__art"
+                src="/chain-tycoon-portrait.png"
+                alt="Chain Tycoon splash: pick your franchise"
+                width="1024"
+                height="1536"
+              />
+            </span>
+            <span class="game-card__meta">
+              <span class="game-card__title">chaintycoon.com</span>
+              <span class="game-card__tag">Build your empire. One location at a time.</span>
+            </span>
+          </a>
+          <a
+            class="game-card"
+            href="https://spinimogame.com"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <span class="game-card__phone">
+              <img
+                class="game-card__art"
+                src="/spinimo-card.webp"
+                alt="Spinimo"
+                width="1024"
+                height="1536"
+              />
+            </span>
+            <span class="game-card__meta">
+              <span class="game-card__title">spinimogame.com</span>
+              <span class="game-card__tag">Spin the board. Clear the grid.</span>
+            </span>
+          </a>
+        </section>
+      </div>
     </main>
     <p class="fallback" hidden>
       WebGPU is required to view this page. Please use a recent Chrome, Edge, or Safari.
