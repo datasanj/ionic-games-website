@@ -1,3 +1,8 @@
 name = "ionic-games"
 compatibility_date = "2026-08-13"
 pages_build_output_dir = "dist"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ionic-games-interest"
+database_id = "17d893bb-b576-4ecb-9d3c-1a94f4a0f1ee"
