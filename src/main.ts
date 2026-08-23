@@ -13,6 +13,35 @@ import { createCloudsLayer } from './clouds/index.ts';
 import { createTunnelLayer } from './tunnel.ts';
 import './style.css';
 
+function trackGameCard(card: HTMLElement) {
+  const title = card.dataset.title?.trim();
+  if (!title) return;
+  const payload = JSON.stringify({
+    title,
+    href: card instanceof HTMLAnchorElement ? card.href : undefined,
+    kind: card.dataset.kind || 'live',
+  });
+  const blob = new Blob([payload], { type: 'application/json' });
+  if (navigator.sendBeacon?.('/api/click', blob)) return;
+  void fetch('/api/click', {
+    method: 'POST',
+    body: payload,
+    headers: { 'Content-Type': 'application/json' },
+    keepalive: true,
+  }).catch(() => {});
+}
+
+document.addEventListener(
+  'click',
+  (event) => {
+    const el = event.target;
+    if (!(el instanceof Element)) return;
+    const card = el.closest('.game-card');
+    if (card instanceof HTMLElement) trackGameCard(card);
+  },
+  { capture: true },
+);
+
 const tunnelEl = document.querySelector<HTMLCanvasElement>('#tunnel');
 const cloudsEl = document.querySelector<HTMLCanvasElement>('#clouds');
 const fallback = document.querySelector<HTMLParagraphElement>('.fallback');
