@@ -1,0 +1,9 @@
+{
+  "name": "ionic-games-website",
+  "install": "npm ci",
+  "repositoryDependencies": [
+    "github.com/latis-games/latis-engine",
+    "github.com/latis-games/tropical-triki",
+    "github.com/latis-games/latis-js"
+  ]
+}
